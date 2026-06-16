@@ -3,57 +3,64 @@ package org.myapp.employee;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import software.amazon.awssdk.core.exception.SdkException;
-import software.amazon.awssdk.core.sync.RequestBody;
-import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.presigner.model.PresignedDeleteObjectRequest;
 
+/**
+ * Service for direct S3 file uploads
+ * Uploads files directly to S3 and returns presigned delete URLs
+ */
 @Service
 public class FileUploadService {
 
     private static final Logger logger = LoggerFactory.getLogger(FileUploadService.class);
 
-    private final FileRepository fileRepository;
-    private final S3Client s3Client;
+    private final S3FileStorageGateway s3FileStorageGateway;
 
     @Value("${aws.s3.bucket}") private String bucket;
 
-    public FileUploadService(FileRepository fileRepository, S3Client s3Client) {
-        this.fileRepository = fileRepository;
-        this.s3Client = s3Client;
+    public FileUploadService(S3FileStorageGateway s3FileStorageGateway) {
+        this.s3FileStorageGateway = s3FileStorageGateway;
     }
 
-    @Async
-    public void uploadToS3(Long fileId) {
+    /**
+     * Upload a file to S3 and get presigned delete URL
+     *
+     * @param fileName    Name of the file
+     * @param contentType MIME type of the file
+     * @param fileData    File content as bytes
+     * @return PresignedDeleteResponse with delete URL
+     */
+    public PresignedDeleteResponse uploadFileAndGetPresignedDelete(String fileName, String contentType, byte[] fileData) {
         try {
-            logger.info("Starting async S3 upload for fileId: {}", fileId);
+            logger.info("Starting S3 upload for file: {}, Size: {} bytes", fileName, fileData != null ? fileData.length : 0);
 
-            FileEntity file = fileRepository.findById(fileId)
-                    .orElseThrow(() -> new RuntimeException("File not found: " + fileId));
+            // Upload file to S3
+            s3FileStorageGateway.uploadToS3(bucket, fileName, contentType, fileData);
+            logger.info("✓ File successfully uploaded to S3. FileName: {}", fileName);
 
-            logger.info("Uploading file: {} to S3 bucket: {}", file.getFileName(), bucket);
+            // Generate presigned delete URL
+            PresignedDeleteObjectRequest presignedDeleteRequest = s3FileStorageGateway
+                    .generatePresignedDeleteRequest(bucket, fileName);
 
-            s3Client.putObject(
-                    PutObjectRequest.builder()
-                            .bucket(bucket)
-                            .key(file.getFileName())
-                            .contentType(file.getContentType())
-                            .build(),
-                    RequestBody.fromBytes(file.getData())
+            logger.info("✓ Presigned delete URL generated. File: {}, URL: {}", 
+                    fileName, presignedDeleteRequest.url());
+
+            return new PresignedDeleteResponse(
+                    null,
+                    fileName,
+                    presignedDeleteRequest.url().toString(),
+                    null,
+                    null
             );
 
-            logger.info("✓ File successfully uploaded to S3. Thread: {}, File: {}",
-                    Thread.currentThread().getName(), file.getFileName());
-            System.out.println("✓ Upload successful - Thread [" + Thread.currentThread().getName() + "] uploaded: " + file.getFileName());
-
         } catch (SdkException e) {
-            logger.error("✗ AWS SDK Error during S3 upload: {}", e.getMessage(), e);
-            System.out.println("✗ AWS Error: " + e.getMessage());
+            logger.error("✗ AWS SDK Error during file upload: {}", e.getMessage(), e);
+            throw new RuntimeException("AWS SDK Error: " + e.getMessage(), e);
         } catch (Exception e) {
-            logger.error("✗ Error during S3 upload for fileId: {}", fileId, e);
-            System.out.println("✗ Upload failed: " + e.getMessage());
+            logger.error("✗ Error during file upload: {}", e.getMessage(), e);
+            throw new RuntimeException("Upload failed: " + e.getMessage(), e);
         }
     }
 }

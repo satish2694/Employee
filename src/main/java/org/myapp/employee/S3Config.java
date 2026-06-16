@@ -4,29 +4,45 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 
 @Configuration
 public class S3Config {
 
     @Value("${aws.s3.region}") private String region;
-    @Value("${aws.accessKeyId}") private String accessKey;
-    @Value("${aws.secretKey}") private String secretKey;
+
+    // Optional — only used when explicitly set (local dev override)
+    @Value("${aws.accessKeyId:}") private String accessKey;
+    @Value("${aws.secretKey:}") private String secretKey;
+
+    private AwsCredentialsProvider credentialsProvider() {
+        if (!accessKey.isBlank() && !secretKey.isBlank()) {
+            // Explicit keys supplied (local dev via env vars or properties)
+            return StaticCredentialsProvider.create(
+                    AwsBasicCredentials.create(accessKey, secretKey));
+        }
+        // Falls through: env vars → ~/.aws/credentials profile → IRSA (EKS) → EC2 instance profile
+        return DefaultCredentialsProvider.create();
+    }
 
     @Bean
     public S3Client s3Client() {
-
-        AwsBasicCredentials credentials =
-                AwsBasicCredentials.create(
-                        accessKey,
-                        secretKey);
-
         return S3Client.builder()
                 .region(Region.of(region))
-                .credentialsProvider(
-                        StaticCredentialsProvider.create(credentials))
+                .credentialsProvider(credentialsProvider())
+                .build();
+    }
+
+    @Bean
+    public S3Presigner s3Presigner() {
+        return S3Presigner.builder()
+                .region(Region.of(region))
+                .credentialsProvider(credentialsProvider())
                 .build();
     }
 }

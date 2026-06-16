@@ -51,5 +51,8 @@ docker-compose.override.yml
 
 # Sensitive properties (keep out of VCS)
 /src/main/resources/application-prod.properties
+/src/main/resources/application-local.properties
+.env
+.env.*
 
 
